@@ -1,3 +1,0 @@
-[bugtraq]
-	url = https://github.com/peter-frentrup/NppMenuSearch/issues/%BUGID%
-	logregex = "([Bb]ugs?|[Ii]ssues?)(\\s*(,\\s*)?(and\\s+)?#\\d+)+\n(\\d)+"
