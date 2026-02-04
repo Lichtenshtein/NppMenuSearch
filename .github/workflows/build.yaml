@@ -1,0 +1,100 @@
+name: Build NppMenuSearch
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Version tag (for example, v1.0.0 or test-build)'
+        required: true
+        default: 'manual-build'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x86, x64]
+        configuration: [Release]
+
+    outputs:
+      RELEASE_TAG: ${{ steps.prepare.outputs.RELEASE_TAG }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet Packages
+        run: nuget restore NppMenuSearch.sln
+
+      - name: Build Solution
+        run: |
+          msbuild NppMenuSearch.sln `
+            /m `
+            /p:Configuration="${{ matrix.configuration }}" `
+            /p:Platform="${{ matrix.platform }}"
+
+      - name: Prepare Artifact
+        id: prepare
+        shell: pwsh
+        run: |
+          $inputTag = "${{ github.event.inputs.release_version }}".Trim()
+          $branchName = "${{ github.ref_name }}".Replace("/", "-")
+          $tagName = "$inputTag-$branchName"
+          
+          $archi = if ("${{ matrix.platform }}" -eq "x86") { "x86" } else { "x64" }
+          $archiveName = "NppMenuSearch_$($tagName)_$($archi).7z"
+          
+          $outputPath = "NppMenuSearch\bin\${{ matrix.platform }}\${{ matrix.configuration }}"
+          $dllPath = "$outputPath\NppMenuSearch.dll"
+
+          if (Test-Path $dllPath) {
+              New-Item -ItemType Directory -Path "dist" -Force
+              Copy-Item "$outputPath\NppMenuSearch.dll" -Destination "dist\"
+
+              if (Test-Path "$outputPath\NppMenuSearch.dll.*.xml") {
+                  Copy-Item "$outputPath\NppMenuSearch.dll.*.xml" -Destination "dist\"
+              }
+
+              7z a -t7z -mx9 "$archiveName" ./dist/*
+              
+              echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+              echo "RELEASE_TAG=$tagName" >> $env:GITHUB_OUTPUT
+          } else {
+              Write-Error "DLL not found at: $dllPath"
+              exit 1
+          }
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}-${{ matrix.configuration }}
+          path: ${{ env.ARCHIVE_NAME }}
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build-*-Release
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.RELEASE_TAG }}
+          files: "*.7z"
+          generate_release_notes: true
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
